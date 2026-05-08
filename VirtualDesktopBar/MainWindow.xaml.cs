@@ -109,6 +109,17 @@ namespace VirtualDesktopBar
         [DllImport("VirtualDesktopAccessor.dll")]
         public static extern int GetDesktopCount(); // 전체 데스크톱 개수 가져오기
 
+        [DllImport("VirtualDesktopAccessor.dll")]
+        public static extern void GoToDesktopNumber(int desktopNumber); // 특정 데스크톱으로 이동
+
+        [DllImport("user32.dll")]
+        static extern bool SetForegroundWindow(IntPtr hWnd); // 창을 최상단으로 올리고 포커스 주기
+
+        [DllImport("user32.dll")]
+        static extern bool ShowWindow(IntPtr hWnd, int nCmdShow); // 창 표시 상태 제어
+
+        private const int SW_RESTORE = 9; // 최소화된 창을 원래 크기로 복구
+
         [DllImport("user32.dll")]
         static extern IntPtr GetForegroundWindow(); // 현재 최상단(포커스) 창 가져오기
 
@@ -241,6 +252,36 @@ namespace VirtualDesktopBar
             //Application이 WinForm과 겹쳐서 아래처럼 명시합니다.        
             System.Windows.Application.Current.Shutdown();
 
+        }
+
+        // 🔥 아이콘 클릭 시 해당 데스크톱으로 이동 및 창 활성화
+        private void AppIcon_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement element && element.DataContext is AppInfo app)
+            {
+                // 1. 이 앱이 속한 데스크톱 번호 찾기
+                int targetDesktopIndex = -1;
+                foreach (var group in Groups)
+                {
+                    if (group.Apps.Contains(app))
+                    {
+                        targetDesktopIndex = group.DesktopId - 1; // API는 0부터 시작
+                        break;
+                    }
+                }
+
+                // 2. 데스크톱 전환
+                if (targetDesktopIndex != -1)
+                {
+                    try { GoToDesktopNumber(targetDesktopIndex); } catch { }
+                }
+
+                // 3. 창 활성화 (최소화되어 있으면 복구 후 포커스)
+                ShowWindow(app.Hwnd, SW_RESTORE);
+                SetForegroundWindow(app.Hwnd);
+
+                e.Handled = true;
+            }
         }
         ////////////////////////////////////////////////////////////////////
 
