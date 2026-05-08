@@ -25,11 +25,11 @@
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
                     <!-- 각 데스크톱 그룹을 구분하는 세로선 (오른쪽 테두리) -->
-                    <Border BorderBrush="#44FFFFFF" BorderThickness="0,0,1,0" Margin="0,0,5,0" Padding="0,0,5,0">
+                    <Border Background="{Binding BackgroundBrush}" BorderBrush="#44FFFFFF" BorderThickness="0,0,1,0" Margin="0,0,5,0" Padding="0,0,5,0" CornerRadius="4">
                         <StackPanel Orientation="Horizontal">
 
-                            <!-- 🔥 수정된 부분: 데스크톱 번호 (현재 화면이면 연한 그레이 배경 칠해짐) 🔥 -->
-                            <Border Background="{Binding BackgroundBrush}" CornerRadius="4" Margin="3,0,6,0" Padding="4,2" VerticalAlignment="Center">
+                            <!-- 🔥 수정된 부분: 데스크톱 번호 (배경색 제거, 바깥쪽 Border로 이동) 🔥 -->
+                            <Border Margin="3,0,6,0" Padding="4,2" VerticalAlignment="Center">
                                 <TextBlock Text="{Binding DesktopId}" Foreground="#DDFFFFFF" FontSize="11" FontWeight="Bold"/>
                             </Border>
 
