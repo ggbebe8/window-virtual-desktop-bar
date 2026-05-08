@@ -1,0 +1,58 @@
+## Visual Studio 기본 무시 파일
+
+# User-specific files (사용자 로컬 설정)
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build results (빌드 결과물 및 임시 파일 - 가장 중요!)
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio 2015/2017/2019/2022 cache/options directory
+.vs/
+# Uncomment if you have tasks that create the project's static files in wwwroot
+#wwwroot/
+
+# NuGet Packages (누겟 패키지 - 복원 기능이 있으므로 올리지 않음)
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+
+# Publish Profiles (배포 프로필 로컬 설정)
+*.pubxml.user
+*.pubxml
+*.Publish.xml
+
+# Windows image file caches & Folder config
+Thumbs.db
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+
+# Crash Reports & Logs
+*.crash
+*.log
+
+# Windows Installer files
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
