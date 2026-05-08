@@ -173,13 +173,25 @@ namespace VirtualDesktopBar
         {
             //아이콘 경로
             _notifyIcon.Icon = new System.Drawing.Icon("app.ico");
-            _notifyIcon.Visible = false;
+            _notifyIcon.Visible = true; // 🔥 항상 보이도록 설정
 
             //트레이 아이콘 더블클릭 이벤트 등록
             _notifyIcon.DoubleClick += (s, e) => ShowMainWindow();
 
             //트레이 아이콘 우클릭 메뉴 등록
             var contextMenu = new System.Windows.Forms.ContextMenuStrip();
+
+            // 🔥 UI 토글 메뉴 추가 (보여주기/숨기기)
+            var toggleMenuItem = new System.Windows.Forms.ToolStripMenuItem("바 표시/숨기기");
+            toggleMenuItem.Click += (s, e) => {
+                if (this.Visibility == Visibility.Visible) this.Hide();
+                else {
+                    RefreshData();
+                    this.Show();
+                }
+            };
+            contextMenu.Items.Add(toggleMenuItem);
+
             var exitMenuItem = new System.Windows.Forms.ToolStripMenuItem("종료");
             exitMenuItem.Click += (s, e) => ExitApplication();
             contextMenu.Items.Add(exitMenuItem);
@@ -208,9 +220,6 @@ namespace VirtualDesktopBar
         {
             this.Hide();
 
-            //윈도우 숨기면서 트레이 아이콘 표시
-            _notifyIcon.Visible = true;
-
             //알림 메시지 표시
             _notifyIcon.ShowBalloonTip(1000, "앱이 트레이로 최소화되었습니다.", "아이콘을 더블클릭하면 다시 열립니다.", ToolTipIcon.Info);
         }
@@ -221,9 +230,6 @@ namespace VirtualDesktopBar
             this.Show();
             this.WindowState = WindowState.Normal;
             this.Activate();
-
-            //트레이 아이콘 제거
-            _notifyIcon.Visible = false;
         }
 
         //우클릭 메뉴 -> 윈도우 종료
