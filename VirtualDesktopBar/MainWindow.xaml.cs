@@ -64,6 +64,7 @@ namespace VirtualDesktopBar
     {
         private System.Windows.Forms.NotifyIcon _notifyIcon = new System.Windows.Forms.NotifyIcon();
         private bool _isExit;
+        private System.Windows.Threading.DispatcherTimer _topmostTimer;
 
         [DllImport("VirtualDesktopAccessor.dll")]
         public static extern int GetWindowDesktopNumber(IntPtr window);
@@ -99,22 +100,27 @@ namespace VirtualDesktopBar
         static extern bool UnhookWinEvent(IntPtr hWinEventHook);
         [DllImport("user32.dll", EntryPoint = "GetClassLong")]
         static extern uint GetClassLongPtr32(IntPtr hWnd, int nIndex);
-        [DllImport("user32.dll", EntryPoint = "GetClassLongPtr")]
+        [DllImport("user32.dll", EntryPoint = "GetClassLong")]
         static extern IntPtr GetClassLongPtr64(IntPtr hWnd, int nIndex);
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLong")]
+        private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")]
+        private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
 
         private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         private const uint SWP_NOSIZE = 0x0001;
         private const uint SWP_NOMOVE = 0x0002;
         private const uint SWP_NOACTIVATE = 0x0010;
+        private const int GWL_EXSTYLE = -20;
+        private const int WS_EX_NOACTIVATE = 0x08000000;
         private const int SW_RESTORE = 9;
         private const int WM_HOTKEY = 0x0312;
         private const uint EVENT_SYSTEM_FOREGROUND = 3;
         private const uint WINEVENT_OUTOFCONTEXT = 0;
-        private const int WM_GETICON = 0x7F;
-        private const int ICON_SMALL = 0;
-        private const int GCLP_HICON = -14;
 
         delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
         private WinEventDelegate _winEventDelegate;
@@ -127,7 +133,12 @@ namespace VirtualDesktopBar
             InitializeComponent();
             InitNotifyIcon();
             DesktopGroups.ItemsSource = Groups;
-            SetWindowPosition();
+            
+            // 2초마다 최상단 강제 갱신
+            _topmostTimer = new System.Windows.Threading.DispatcherTimer();
+            _topmostTimer.Interval = TimeSpan.FromSeconds(2);
+            _topmostTimer.Tick += (s, e) => ForceTopmost();
+            _topmostTimer.Start();
         }
 
         private void InitNotifyIcon()
@@ -137,7 +148,11 @@ namespace VirtualDesktopBar
             _notifyIcon.DoubleClick += (s, e) => ShowMainWindow();
 
             var contextMenu = new System.Windows.Forms.ContextMenuStrip();
-            var toggleMenuItem = new System.Windows.Forms.ToolStripMenuItem("바 표시/숨기기");
+            var resetPosMenuItem = new System.Windows.Forms.ToolStripMenuItem("위치 리셋 (Shift+Ctrl+V)");
+            resetPosMenuItem.Click += (s, e) => SetWindowPosition();
+            contextMenu.Items.Add(resetPosMenuItem);
+
+            var toggleMenuItem = new System.Windows.Forms.ToolStripMenuItem("바 표시/숨기기 (Alt+V)");
             toggleMenuItem.Click += (s, e) => {
                 if (this.Visibility == Visibility.Visible) this.Hide();
                 else { RefreshData(); this.Show(); ForceTopmost(); }
@@ -147,7 +162,6 @@ namespace VirtualDesktopBar
             var exitMenuItem = new System.Windows.Forms.ToolStripMenuItem("종료");
             exitMenuItem.Click += (s, e) => ExitApplication();
             contextMenu.Items.Add(exitMenuItem);
-
             _notifyIcon.ContextMenuStrip = contextMenu;
         }
 
@@ -160,7 +174,7 @@ namespace VirtualDesktopBar
         private void HideMainWindow()
         {
             this.Hide();
-            _notifyIcon.ShowBalloonTip(1000, "VirtualDesktopBar", "앱이 트레이로 최소화되었습니다.", System.Windows.Forms.ToolTipIcon.Info);
+            _notifyIcon.ShowBalloonTip(1000, "VirtualDesktopBar", "트레이로 최소화되었습니다.", System.Windows.Forms.ToolTipIcon.Info);
         }
 
         private void ShowMainWindow()
@@ -168,17 +182,15 @@ namespace VirtualDesktopBar
             this.Show();
             this.WindowState = WindowState.Normal;
             this.Activate();
-            PinWindow(new WindowInteropHelper(this).Handle); // 다시 열 때 고정 확인
-            ForceTopmost();
+            SetWindowPosition();
         }
 
         private void ExitApplication()
         {
             _isExit = true;
             if (_hWinEventHook != IntPtr.Zero) UnhookWinEvent(_hWinEventHook);
-            _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
-            Process.GetCurrentProcess().Kill(); // 가장 확실한 프로세스 종료
+            Process.GetCurrentProcess().Kill();
         }
 
         private void AppIcon_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -190,26 +202,27 @@ namespace VirtualDesktopBar
                 if (targetDesktopIndex != -1) { try { GoToDesktopNumber(targetDesktopIndex); } catch { } }
                 ShowWindow(app.Hwnd, SW_RESTORE);
                 SetForegroundWindow(app.Hwnd);
+                ForceTopmost();
                 e.Handled = true;
             }
         }
 
-        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
-        {
-            SetWindowPosition();
-            IntPtr myHwnd = new WindowInteropHelper(this).Handle;
-            PinWindow(myHwnd);
-            RefreshData();
-            ForceTopmost();
-        }
-
         private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
-            if (msg == WM_HOTKEY && wParam.ToInt32() == 9000)
+            if (msg == WM_HOTKEY)
             {
-                if (this.Visibility == Visibility.Visible) this.Hide();
-                else { RefreshData(); this.Show(); ForceTopmost(); }
-                handled = true;
+                int id = wParam.ToInt32();
+                if (id == 9000) // Alt+V (토글)
+                {
+                    if (this.Visibility == Visibility.Visible) this.Hide();
+                    else { RefreshData(); this.Show(); ForceTopmost(); }
+                    handled = true;
+                }
+                else if (id == 9001) // Shift+Ctrl+V (위치 리셋)
+                {
+                    SetWindowPosition();
+                    handled = true;
+                }
             }
             return IntPtr.Zero;
         }
@@ -218,12 +231,21 @@ namespace VirtualDesktopBar
         {
             base.OnSourceInitialized(e);
             IntPtr myHwnd = new WindowInteropHelper(this).Handle;
-            PinWindow(myHwnd);
+            
+            // 클릭 시 포커스 뺏지 않기
+            IntPtr exStyle = GetWindowLongPtr(myHwnd, GWL_EXSTYLE);
+            if (IntPtr.Size == 8) SetWindowLongPtr64(myHwnd, GWL_EXSTYLE, new IntPtr(exStyle.ToInt64() | WS_EX_NOACTIVATE));
+            else SetWindowLong32(myHwnd, GWL_EXSTYLE, (int)exStyle.ToInt64() | WS_EX_NOACTIVATE);
+
             HwndSource.FromHwnd(myHwnd).AddHook(HwndHook);
-            RegisterHotKey(myHwnd, 9000, 0x0001 | 0x0004, 0x56);
+            RegisterHotKey(myHwnd, 9000, 0x0001 | 0x0004, 0x56); // Alt+V
+            RegisterHotKey(myHwnd, 9001, 0x0002 | 0x0004, 0x56); // Shift+Ctrl+V
+            
             _winEventDelegate = new WinEventDelegate(WinEventProc);
             _hWinEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, _winEventDelegate, 0, 0, WINEVENT_OUTOFCONTEXT);
+            
             RefreshData();
+            SetWindowPosition();
         }
 
         private void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
@@ -234,7 +256,7 @@ namespace VirtualDesktopBar
                 {
                     await System.Threading.Tasks.Task.Delay(150);
                     Dispatcher.Invoke(() => {
-                        PinWindow(new WindowInteropHelper(this).Handle); // 데스크톱 전환 대비 수시로 고정
+                        PinWindow(new WindowInteropHelper(this).Handle);
                         RefreshData();
                         ForceTopmost();
                     });
@@ -245,15 +267,28 @@ namespace VirtualDesktopBar
         private void ForceTopmost()
         {
             IntPtr hWnd = new WindowInteropHelper(this).Handle;
-            SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            this.Topmost = false; this.Topmost = true;
+            if (hWnd != IntPtr.Zero && this.Visibility == Visibility.Visible)
+            {
+                SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                this.Topmost = false; this.Topmost = true;
+            }
         }
 
         private void SetWindowPosition()
         {
-            this.WindowStartupLocation = WindowStartupLocation.Manual;
-            this.Left = SystemParameters.WorkArea.Left + 10;
-            this.SizeChanged += (s, e) => Dispatcher.BeginInvoke(new Action(() => this.Top = SystemParameters.PrimaryScreenHeight - this.ActualHeight), System.Windows.Threading.DispatcherPriority.Render);
+            Dispatcher.Invoke(() => {
+                this.WindowStartupLocation = WindowStartupLocation.Manual;
+                var primaryScreen = System.Windows.Forms.Screen.PrimaryScreen;
+                var source = PresentationSource.FromVisual(this);
+                double dpiY = 1.0;
+                if (source?.CompositionTarget != null) dpiY = source.CompositionTarget.TransformToDevice.M22;
+                
+                this.Left = (primaryScreen.WorkingArea.Left / dpiY) + 10;
+                this.Top = (primaryScreen.Bounds.Bottom / dpiY) - this.ActualHeight;
+                
+                PinWindow(new WindowInteropHelper(this).Handle);
+                ForceTopmost();
+            }, System.Windows.Threading.DispatcherPriority.Render);
         }
 
         private void RefreshData()
@@ -261,10 +296,16 @@ namespace VirtualDesktopBar
             int desktopCount = 3;
             try { desktopCount = GetDesktopCount(); } catch { }
             if (Groups.Count != desktopCount) { Groups.Clear(); for (int i = 0; i < desktopCount; i++) Groups.Add(new DesktopGroup { DesktopId = i + 1 }); }
+            
             IntPtr focusedHwnd = GetForegroundWindow();
             int currentDesktopIndex = -1;
             try { currentDesktopIndex = GetCurrentDesktopNumber(); } catch { }
-            for (int i = 0; i < Groups.Count; i++) { Groups[i].IsLast = (i == Groups.Count - 1); Groups[i].IsCurrent = (Groups[i].DesktopId == currentDesktopIndex + 1); }
+            
+            for (int i = 0; i < Groups.Count; i++) {
+                Groups[i].IsLast = (i == Groups.Count - 1);
+                Groups[i].IsCurrent = (Groups[i].DesktopId == currentDesktopIndex + 1);
+            }
+            
             var currentWindows = new List<AppInfo_Internal>();
             EnumWindows((hWnd, lParam) => {
                 if (IsWindowVisible(hWnd)) {
@@ -277,6 +318,7 @@ namespace VirtualDesktopBar
                 }
                 return true;
             }, 0);
+            
             foreach (var group in Groups) {
                 var newAppsForThisDesk = currentWindows.Where(x => x.DesktopId == group.DesktopId).ToList();
                 var toRemove = group.Apps.Where(a => !newAppsForThisDesk.Any(n => n.Hwnd == a.Hwnd)).ToList();
