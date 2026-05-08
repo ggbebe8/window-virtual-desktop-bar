@@ -66,6 +66,7 @@ namespace VirtualDesktopBar
         private bool _isExit;
         private System.Windows.Threading.DispatcherTimer _topmostTimer;
 
+        // --- [Win32 API Import] ---
         [DllImport("VirtualDesktopAccessor.dll")]
         public static extern int GetWindowDesktopNumber(IntPtr window);
         [DllImport("VirtualDesktopAccessor.dll")]
@@ -100,7 +101,7 @@ namespace VirtualDesktopBar
         static extern bool UnhookWinEvent(IntPtr hWinEventHook);
         [DllImport("user32.dll", EntryPoint = "GetClassLong")]
         static extern uint GetClassLongPtr32(IntPtr hWnd, int nIndex);
-        [DllImport("user32.dll", EntryPoint = "GetClassLong")]
+        [DllImport("user32.dll", EntryPoint = "GetClassLongPtr")]
         static extern IntPtr GetClassLongPtr64(IntPtr hWnd, int nIndex);
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
@@ -134,10 +135,10 @@ namespace VirtualDesktopBar
             InitNotifyIcon();
             DesktopGroups.ItemsSource = Groups;
             
-            // 2초마다 최상단 강제 갱신
             _topmostTimer = new System.Windows.Threading.DispatcherTimer();
             _topmostTimer.Interval = TimeSpan.FromSeconds(2);
             _topmostTimer.Tick += (s, e) => ForceTopmost();
+            // 처음에는 켭니다.
             _topmostTimer.Start();
         }
 
@@ -153,16 +154,19 @@ namespace VirtualDesktopBar
             contextMenu.Items.Add(resetPosMenuItem);
 
             var toggleMenuItem = new System.Windows.Forms.ToolStripMenuItem("바 표시/숨기기 (Alt+V)");
-            toggleMenuItem.Click += (s, e) => {
-                if (this.Visibility == Visibility.Visible) this.Hide();
-                else { RefreshData(); this.Show(); ForceTopmost(); }
-            };
+            toggleMenuItem.Click += (s, e) => ToggleUI();
             contextMenu.Items.Add(toggleMenuItem);
 
             var exitMenuItem = new System.Windows.Forms.ToolStripMenuItem("종료");
             exitMenuItem.Click += (s, e) => ExitApplication();
             contextMenu.Items.Add(exitMenuItem);
             _notifyIcon.ContextMenuStrip = contextMenu;
+        }
+
+        private void ToggleUI()
+        {
+            if (this.Visibility == Visibility.Visible) HideMainWindow();
+            else ShowMainWindow();
         }
 
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
@@ -174,11 +178,14 @@ namespace VirtualDesktopBar
         private void HideMainWindow()
         {
             this.Hide();
-            _notifyIcon.ShowBalloonTip(1000, "VirtualDesktopBar", "트레이로 최소화되었습니다.", System.Windows.Forms.ToolTipIcon.Info);
+            _topmostTimer.Stop(); // 🔥 숨겨져 있을 땐 타이머 정지 (CPU 절약)
+            _notifyIcon.ShowBalloonTip(1000, "VirtualDesktopBar", "트레이로 최소화되었습니다. (자원 최소화 모드)", System.Windows.Forms.ToolTipIcon.Info);
         }
 
         private void ShowMainWindow()
         {
+            _topmostTimer.Start(); // 🔥 보일 때 타이머 재개
+            RefreshData();
             this.Show();
             this.WindowState = WindowState.Normal;
             this.Activate();
@@ -212,17 +219,8 @@ namespace VirtualDesktopBar
             if (msg == WM_HOTKEY)
             {
                 int id = wParam.ToInt32();
-                if (id == 9000) // Alt+V (토글)
-                {
-                    if (this.Visibility == Visibility.Visible) this.Hide();
-                    else { RefreshData(); this.Show(); ForceTopmost(); }
-                    handled = true;
-                }
-                else if (id == 9001) // Shift+Ctrl+V (위치 리셋)
-                {
-                    SetWindowPosition();
-                    handled = true;
-                }
+                if (id == 9000) { ToggleUI(); handled = true; }
+                else if (id == 9001) { SetWindowPosition(); handled = true; }
             }
             return IntPtr.Zero;
         }
@@ -232,7 +230,6 @@ namespace VirtualDesktopBar
             base.OnSourceInitialized(e);
             IntPtr myHwnd = new WindowInteropHelper(this).Handle;
             
-            // 클릭 시 포커스 뺏지 않기
             IntPtr exStyle = GetWindowLongPtr(myHwnd, GWL_EXSTYLE);
             if (IntPtr.Size == 8) SetWindowLongPtr64(myHwnd, GWL_EXSTYLE, new IntPtr(exStyle.ToInt64() | WS_EX_NOACTIVATE));
             else SetWindowLong32(myHwnd, GWL_EXSTYLE, (int)exStyle.ToInt64() | WS_EX_NOACTIVATE);
@@ -250,6 +247,9 @@ namespace VirtualDesktopBar
 
         private void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
         {
+            // 🔥 숨겨져 있으면 이벤트 감시 중단 (리소스 절약)
+            if (this.Visibility != Visibility.Visible) return;
+
             if (eventType == EVENT_SYSTEM_FOREGROUND)
             {
                 System.Threading.Tasks.Task.Run(async () =>
@@ -293,6 +293,9 @@ namespace VirtualDesktopBar
 
         private void RefreshData()
         {
+            // 🔥 숨겨져 있으면 데이터 갱신 안 함 (CPU 절약)
+            if (this.Visibility != Visibility.Visible) return;
+
             int desktopCount = 3;
             try { desktopCount = GetDesktopCount(); } catch { }
             if (Groups.Count != desktopCount) { Groups.Clear(); for (int i = 0; i < desktopCount; i++) Groups.Add(new DesktopGroup { DesktopId = i + 1 }); }
