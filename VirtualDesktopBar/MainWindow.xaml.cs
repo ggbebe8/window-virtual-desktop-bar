@@ -117,6 +117,16 @@ namespace VirtualDesktopBar
             }
         }
 
+        // 🔥 데스크톱 번호 클릭 시 해당 데스크톱으로 이동
+        private void DesktopId_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement element && element.DataContext is DesktopGroup group)
+            {
+                try { GoToDesktopNumber(group.DesktopId - 1); } catch { }
+                e.Handled = true;
+            }
+        }
+
         private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             if (msg == WM_HOTKEY)

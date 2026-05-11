@@ -38,8 +38,9 @@
                         </Border.Style>
                         <StackPanel Orientation="Horizontal">
 
-                            <!-- 🔥 수정된 부분: 데스크톱 번호 (배경색 제거, 바깥쪽 Border로 이동) 🔥 -->
-                            <Border Margin="3,0,6,0" Padding="4,2" VerticalAlignment="Center">
+                            <!-- 🔥 수정된 부분: 데스크톱 번호 클릭 시 이동 기능 추가 🔥 -->
+                            <Border Margin="3,0,6,0" Padding="4,2" VerticalAlignment="Center" 
+                                    MouseDown="DesktopId_MouseDown" Cursor="Hand">
                                 <TextBlock Text="{Binding DesktopId}" Foreground="#DDFFFFFF" FontSize="11" FontWeight="Bold"/>
                             </Border>
 
