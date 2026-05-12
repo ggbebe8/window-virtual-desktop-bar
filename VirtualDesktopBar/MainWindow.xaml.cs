@@ -117,13 +117,47 @@ namespace VirtualDesktopBar
             }
         }
 
-        // 🔥 데스크톱 번호 클릭 시 해당 데스크톱으로 이동
-        private void DesktopId_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        // 🔥 데스크톱 번호 클릭 시 해당 데스크톱으로 이동 및 포커스 복구
+        private async void DesktopId_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             if (sender is FrameworkElement element && element.DataContext is DesktopGroup group)
             {
-                try { GoToDesktopNumber(group.DesktopId - 1); } catch { }
+                try 
+                { 
+                    GoToDesktopNumber(group.DesktopId - 1); 
+                    
+                    // 데스크톱 전환 애니메이션 대기 후 포커스 복구
+                    await System.Threading.Tasks.Task.Delay(300);
+                    FocusTopWindowOnDesktop(group.DesktopId);
+                } 
+                catch { }
                 e.Handled = true;
+            }
+        }
+
+        private void FocusTopWindowOnDesktop(int desktopId)
+        {
+            IntPtr topHwnd = IntPtr.Zero;
+            // EnumWindows는 Z-Order(위에서 아래) 순서로 창을 탐색합니다.
+            EnumWindows((hWnd, lParam) => {
+                if (IsWindowVisible(hWnd)) {
+                    // 해당 데스크톱에 속한 창인지 확인
+                    if (GetWindowDesktopNumber(hWnd) + 1 == desktopId) {
+                        StringBuilder title = new StringBuilder(256);
+                        GetWindowText(hWnd, title, title.Capacity);
+                        // 우리 앱(바)은 제외하고 가장 위에 있는 유효한 창 찾기
+                        if (title.Length > 0 && title.ToString() != "VD Bar") {
+                            topHwnd = hWnd;
+                            return false; // 첫 번째(최상단) 창을 찾았으므로 탐색 중단
+                        }
+                    }
+                }
+                return true;
+            }, 0);
+
+            if (topHwnd != IntPtr.Zero) {
+                ShowWindow(topHwnd, SW_RESTORE);
+                SetForegroundWindow(topHwnd);
             }
         }
 
