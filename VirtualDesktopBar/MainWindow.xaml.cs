@@ -24,6 +24,12 @@ namespace VirtualDesktopBar
         private bool _isLast;
         public bool IsLast { get => _isLast; set { if (_isLast != value) { _isLast = value; OnPropertyChanged(); } } }
         public System.Windows.Media.Brush BackgroundBrush => IsCurrent ? new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x55, 0xCC, 0xCC, 0xCC)) : System.Windows.Media.Brushes.Transparent;
+
+        private string _desktopName;
+        public string DesktopName { get => _desktopName; set { if (_desktopName != value) { _desktopName = value; OnPropertyChanged(); OnPropertyChanged(nameof(DisplayName)); } } }
+        public string DisplayName => MainWindow.ShowDesktopNames ? (string.IsNullOrEmpty(DesktopName) ? $"데스크톱 {DesktopId}" : DesktopName) : DesktopId.ToString();
+        public void RefreshDisplayName() => OnPropertyChanged(nameof(DisplayName));
+
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
@@ -51,6 +57,9 @@ namespace VirtualDesktopBar
         [DllImport("VirtualDesktopAccessor.dll")] public static extern int GetDesktopCount();
         [DllImport("VirtualDesktopAccessor.dll")] public static extern void GoToDesktopNumber(int desktopNumber);
         [DllImport("VirtualDesktopAccessor.dll")] public static extern int GetCurrentDesktopNumber();
+        [DllImport("VirtualDesktopAccessor.dll")] public static extern int GetDesktopName(int desktopNumber, byte[] name, int length);
+        [DllImport("VirtualDesktopAccessor.dll")] public static extern void SetDesktopName(int desktopNumber, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+
         [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc enumFunc, int lParam);
         delegate bool EnumWindowsProc(IntPtr hWnd, int lParam);
         [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
@@ -58,6 +67,7 @@ namespace VirtualDesktopBar
         [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SendMessageTimeout(IntPtr hWnd, int Msg, int wParam, int lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
         [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
         [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc, WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
@@ -71,8 +81,9 @@ namespace VirtualDesktopBar
         [DllImport("user32.dll", EntryPoint = "SetWindowLong")] private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
         [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")] private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
 
+        public static bool ShowDesktopNames { get; set; } = false;
         private const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
-        private const int GWL_EXSTYLE = -20, WS_EX_NOACTIVATE = 0x08000000, SW_RESTORE = 9, WM_HOTKEY = 0x0312, WM_GETICON = 0x7F;
+        private const int GWL_EXSTYLE = -20, WS_EX_NOACTIVATE = 0x08000000, SW_RESTORE = 9, SW_SHOW = 5, WM_HOTKEY = 0x0312, WM_GETICON = 0x7F;
         private const uint EVENT_SYSTEM_FOREGROUND = 0x0003, EVENT_SYSTEM_DESKTOPSWITCH = 0x0020;
 
         delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
@@ -84,8 +95,19 @@ namespace VirtualDesktopBar
         public MainWindow()
         {
             InitializeComponent();
+            LoadSettings();
             InitNotifyIcon();
             DesktopGroups.ItemsSource = Groups;
+        }
+
+        private void SaveSettings()
+        {
+            try { System.IO.File.WriteAllText("settings.cfg", ShowDesktopNames.ToString()); } catch { }
+        }
+
+        private void LoadSettings()
+        {
+            try { if (System.IO.File.Exists("settings.cfg")) ShowDesktopNames = bool.Parse(System.IO.File.ReadAllText("settings.cfg")); } catch { }
         }
 
         private void InitNotifyIcon()
@@ -96,6 +118,11 @@ namespace VirtualDesktopBar
             var contextMenu = new System.Windows.Forms.ContextMenuStrip();
             contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("위치 리셋 (Shift+Ctrl+V)", null, (s, e) => SetWindowPosition()));
             contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("바 표시/숨기기 (Alt+V)", null, (s, e) => ToggleUI()));
+            contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("이름/번호 전환", null, (s, e) => {
+                ShowDesktopNames = !ShowDesktopNames;
+                SaveSettings();
+                foreach (var g in Groups) g.RefreshDisplayName();
+            }));
             contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("종료", null, (s, e) => ExitApplication()));
             _notifyIcon.ContextMenuStrip = contextMenu;
         }
@@ -113,26 +140,53 @@ namespace VirtualDesktopBar
                 int targetDesk = -1;
                 foreach (var g in Groups) { if (g.Apps.Contains(app)) { targetDesk = g.DesktopId - 1; break; } }
                 if (targetDesk != -1) try { GoToDesktopNumber(targetDesk); } catch { }
-                ShowWindow(app.Hwnd, SW_RESTORE); SetForegroundWindow(app.Hwnd); ForceTopmost(); e.Handled = true;
+                
+                if (IsIconic(app.Hwnd)) ShowWindow(app.Hwnd, SW_RESTORE);
+                else ShowWindow(app.Hwnd, SW_SHOW);
+
+                SetForegroundWindow(app.Hwnd); ForceTopmost(); e.Handled = true;
             }
         }
 
-        // 🔥 데스크톱 번호 클릭 시 해당 데스크톱으로 이동 및 포커스 복구
-        private async void DesktopId_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        // 🔥 데스크톱 번호 클릭 시 해당 데스크톱으로 이동
+        private void DesktopId_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
             if (sender is FrameworkElement element && element.DataContext is DesktopGroup group)
             {
                 try 
                 { 
                     GoToDesktopNumber(group.DesktopId - 1); 
-                    
-                    // 데스크톱 전환 애니메이션 대기 후 포커스 복구
-                    await System.Threading.Tasks.Task.Delay(300);
-                    FocusTopWindowOnDesktop(group.DesktopId);
                 } 
                 catch { }
                 e.Handled = true;
             }
+        }
+
+        private void DesktopId_MouseRightButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (sender is FrameworkElement element && element.DataContext is DesktopGroup group)
+            {
+                string newName = ShowInputDialog(group.DesktopName);
+                if (newName != null)
+                {
+                    SetDesktopName(group.DesktopId - 1, newName);
+                    RefreshData(true);
+                }
+                e.Handled = true;
+            }
+        }
+
+        private string ShowInputDialog(string defaultText)
+        {
+            Window dialog = new Window { Width = 300, Height = 130, Title = "이름 변경", WindowStartupLocation = WindowStartupLocation.CenterScreen, Topmost = true, ResizeMode = ResizeMode.NoResize };
+            var tb = new System.Windows.Controls.TextBox { Text = defaultText, Margin = new Thickness(10) };
+            var btn = new System.Windows.Controls.Button { Content = "확인", Margin = new Thickness(10, 0, 10, 10), Width = 80, IsDefault = true };
+            btn.Click += (s, e) => dialog.DialogResult = true;
+            var panel = new System.Windows.Controls.StackPanel();
+            panel.Children.Add(tb); panel.Children.Add(btn);
+            dialog.Content = panel;
+            if (dialog.ShowDialog() == true) return tb.Text;
+            return null;
         }
 
         private void FocusTopWindowOnDesktop(int desktopId)
@@ -224,7 +278,7 @@ namespace VirtualDesktopBar
                 var source = PresentationSource.FromVisual(this);
                 double dpiY = (source?.CompositionTarget != null) ? source.CompositionTarget.TransformToDevice.M22 : 1.0;
                 this.Left = (screen.WorkingArea.Left / dpiY) + 10;
-                this.Top = (screen.Bounds.Bottom / dpiY) - this.ActualHeight;
+                this.Top = (screen.Bounds.Bottom / dpiY) - this.ActualHeight - 50;
                 PinWindow(new WindowInteropHelper(this).Handle); ForceTopmost();
             }, System.Windows.Threading.DispatcherPriority.Render);
         }
@@ -236,7 +290,15 @@ namespace VirtualDesktopBar
             if (Groups.Count != desktopCount) { Groups.Clear(); for (int i = 0; i < desktopCount; i++) Groups.Add(new DesktopGroup { DesktopId = i + 1 }); }
             IntPtr focusedHwnd = GetForegroundWindow();
             int currentDesk = -1; try { currentDesk = GetCurrentDesktopNumber(); } catch { }
-            for (int i = 0; i < Groups.Count; i++) { Groups[i].IsLast = (i == Groups.Count - 1); Groups[i].IsCurrent = (Groups[i].DesktopId == currentDesk + 1); }
+            for (int i = 0; i < Groups.Count; i++) 
+            { 
+                Groups[i].IsLast = (i == Groups.Count - 1); 
+                Groups[i].IsCurrent = (Groups[i].DesktopId == currentDesk + 1);
+
+                byte[] buffer = new byte[1024];
+                int res = GetDesktopName(Groups[i].DesktopId - 1, buffer, buffer.Length);
+                Groups[i].DesktopName = (res >= 0) ? Encoding.UTF8.GetString(buffer).Split('\0')[0] : "";
+            }
 
             var currentWindows = new List<AppInfo_Internal>();
             EnumWindows((hWnd, lParam) => {
@@ -250,10 +312,17 @@ namespace VirtualDesktopBar
                 return true;
             }, 0);
 
+            // 🔥 Z-Order 역순(실행 순서와 유사)으로 뒤집어 작업표시줄과 비슷한 느낌을 줍니다.
+            currentWindows.Reverse();
+
             foreach (var group in Groups) {
                 var newApps = currentWindows.Where(x => x.DesktopId == group.DesktopId).ToList();
+                
+                // 1. 없어진 창 제거
                 var toRemove = group.Apps.Where(a => !newApps.Any(n => n.Hwnd == a.Hwnd)).ToList();
                 foreach (var a in toRemove) group.Apps.Remove(a);
+                
+                // 2. 새로운 창 추가 및 기존 창 위치 유지
                 foreach (var n in newApps) {
                     var existing = group.Apps.FirstOrDefault(a => a.Hwnd == n.Hwnd);
                     if (existing == null) {
@@ -265,6 +334,9 @@ namespace VirtualDesktopBar
                         if (forceIconUpdate) { var newIcon = ExtractIconFromHwnd(n.Hwnd); if (newIcon != null) existing.AppIcon = newIcon; }
                     }
                 }
+
+                // 🔥 3. 정렬 상태를 리스트 순서에 맞게 동기화 (기존 아이콘 위치는 최대한 고정)
+                // 이 부분은 위 루프에서 순서대로 추가되므로 자연스럽게 유지됩니다.
             }
         }
 

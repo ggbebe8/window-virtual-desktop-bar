@@ -40,8 +40,9 @@
 
                             <!-- 🔥 수정된 부분: 데스크톱 번호 클릭 시 이동 기능 추가 🔥 -->
                             <Border Margin="3,0,6,0" Padding="4,2" VerticalAlignment="Center" 
-                                    MouseDown="DesktopId_MouseDown" Cursor="Hand">
-                                <TextBlock Text="{Binding DesktopId}" Foreground="#DDFFFFFF" FontSize="11" FontWeight="Bold"/>
+                                    MouseDown="DesktopId_MouseDown" MouseRightButtonDown="DesktopId_MouseRightButtonDown" 
+                                    Cursor="Hand" Background="Transparent">
+                                <TextBlock Text="{Binding DisplayName}" Foreground="#DDFFFFFF" FontSize="11" FontWeight="Bold"/>
                             </Border>
 
                             <!-- 안쪽 루프: 해당 데스크톱에 속한 앱 아이콘들 -->
