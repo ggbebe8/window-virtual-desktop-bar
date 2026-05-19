@@ -82,6 +82,7 @@ namespace VirtualDesktopBar
         [DllImport("user32.dll", EntryPoint = "SetWindowLongPtr")] private static extern IntPtr SetWindowLongPtr64(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
 
         public static bool ShowDesktopNames { get; set; } = false;
+        public static bool UseBottomOffset { get; set; } = false;
         private const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
         private const int GWL_EXSTYLE = -20, WS_EX_NOACTIVATE = 0x08000000, SW_RESTORE = 9, SW_SHOW = 5, WM_HOTKEY = 0x0312, WM_GETICON = 0x7F;
         private const uint EVENT_SYSTEM_FOREGROUND = 0x0003, EVENT_SYSTEM_DESKTOPSWITCH = 0x0020;
@@ -102,12 +103,31 @@ namespace VirtualDesktopBar
 
         private void SaveSettings()
         {
-            try { System.IO.File.WriteAllText("settings.cfg", ShowDesktopNames.ToString()); } catch { }
+            try 
+            { 
+                string content = $"ShowDesktopNames={ShowDesktopNames}\nUseBottomOffset={UseBottomOffset}";
+                System.IO.File.WriteAllText("settings.cfg", content); 
+            } catch { }
         }
 
         private void LoadSettings()
         {
-            try { if (System.IO.File.Exists("settings.cfg")) ShowDesktopNames = bool.Parse(System.IO.File.ReadAllText("settings.cfg")); } catch { }
+            try 
+            { 
+                if (System.IO.File.Exists("settings.cfg")) 
+                {
+                    var lines = System.IO.File.ReadAllLines("settings.cfg");
+                    foreach (var line in lines)
+                    {
+                        var parts = line.Split('=');
+                        if (parts.Length == 2)
+                        {
+                            if (parts[0] == "ShowDesktopNames") ShowDesktopNames = bool.Parse(parts[1]);
+                            else if (parts[0] == "UseBottomOffset") UseBottomOffset = bool.Parse(parts[1]);
+                        }
+                    }
+                }
+            } catch { }
         }
 
         private void InitNotifyIcon()
@@ -122,6 +142,11 @@ namespace VirtualDesktopBar
                 ShowDesktopNames = !ShowDesktopNames;
                 SaveSettings();
                 foreach (var g in Groups) g.RefreshDisplayName();
+            }));
+            contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("바 위치 전환 (하단/여백)", null, (s, e) => {
+                UseBottomOffset = !UseBottomOffset;
+                SaveSettings();
+                SetWindowPosition();
             }));
             contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("종료", null, (s, e) => ExitApplication()));
             _notifyIcon.ContextMenuStrip = contextMenu;
@@ -278,7 +303,11 @@ namespace VirtualDesktopBar
                 var source = PresentationSource.FromVisual(this);
                 double dpiY = (source?.CompositionTarget != null) ? source.CompositionTarget.TransformToDevice.M22 : 1.0;
                 this.Left = (screen.WorkingArea.Left / dpiY) + 10;
-                this.Top = (screen.Bounds.Bottom / dpiY) - this.ActualHeight - 50;
+                
+                double topPos = (screen.Bounds.Bottom / dpiY) - this.ActualHeight;
+                if (UseBottomOffset) topPos -= 50;
+                this.Top = topPos;
+
                 PinWindow(new WindowInteropHelper(this).Handle); ForceTopmost();
             }, System.Windows.Threading.DispatcherPriority.Render);
         }
