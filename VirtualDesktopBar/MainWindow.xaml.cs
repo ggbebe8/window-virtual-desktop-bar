@@ -136,8 +136,8 @@ namespace VirtualDesktopBar
             _notifyIcon.Visible = true;
             _notifyIcon.DoubleClick += (s, e) => ShowMainWindow();
             var contextMenu = new System.Windows.Forms.ContextMenuStrip();
-            contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("위치 리셋 (Shift+Ctrl+V)", null, (s, e) => SetWindowPosition()));
-            contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("바 표시/숨기기 (Alt+V)", null, (s, e) => ToggleUI()));
+            contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("위치 리셋", null, (s, e) => SetWindowPosition()));
+            contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("바 표시/숨기기 (Win+Alt+V)", null, (s, e) => ToggleUI()));
             contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("이름/번호 전환", null, (s, e) => {
                 ShowDesktopNames = !ShowDesktopNames;
                 SaveSettings();
@@ -246,7 +246,6 @@ namespace VirtualDesktopBar
             {
                 int id = wParam.ToInt32();
                 if (id == 9000) { ToggleUI(); handled = true; }
-                else if (id == 9001) { SetWindowPosition(); handled = true; }
             }
             else if (msg == _shellHookMsg) { DelayedRefresh(800); handled = true; } // 지연 시간 약간 증가
             return IntPtr.Zero;
@@ -263,8 +262,7 @@ namespace VirtualDesktopBar
             HwndSource.FromHwnd(myHwnd).AddHook(HwndHook);
             _shellHookMsg = RegisterWindowMessage("SHELLHOOK");
             RegisterShellHookWindow(myHwnd);
-            RegisterHotKey(myHwnd, 9000, 0x0001 | 0x0004, 0x56); // Alt+V
-            RegisterHotKey(myHwnd, 9001, 0x0002 | 0x0004, 0x56); // Shift+Ctrl+V
+            RegisterHotKey(myHwnd, 9000, 0x0008 | 0x0001, 0x56); // Win+Alt+V
 
             _winEventDelegate = new WinEventDelegate(WinEventProc);
             _hWinEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_DESKTOPSWITCH, IntPtr.Zero, _winEventDelegate, 0, 0, 0);
