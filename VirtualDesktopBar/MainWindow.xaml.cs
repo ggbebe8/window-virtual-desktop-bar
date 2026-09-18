@@ -59,6 +59,8 @@ namespace VirtualDesktopBar
         [DllImport("VirtualDesktopAccessor.dll")] public static extern int GetCurrentDesktopNumber();
         [DllImport("VirtualDesktopAccessor.dll")] public static extern int GetDesktopName(int desktopNumber, byte[] name, int length);
         [DllImport("VirtualDesktopAccessor.dll")] public static extern void SetDesktopName(int desktopNumber, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+        [DllImport("VirtualDesktopAccessor.dll")] public static extern void MoveWindowToDesktopNumber(IntPtr window, int desktopNumber);
+        [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
         [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc enumFunc, int lParam);
         delegate bool EnumWindowsProc(IntPtr hWnd, int lParam);
@@ -246,6 +248,29 @@ namespace VirtualDesktopBar
             {
                 int id = wParam.ToInt32();
                 if (id == 9000) { ToggleUI(); handled = true; }
+                else if (id >= 1001 && id <= 1005)
+                {
+                    int targetDesk = id - 1001;
+                    if (targetDesk < GetDesktopCount())
+                    {
+                        GoToDesktopNumber(targetDesk);
+                    }
+                    handled = true;
+                }
+                else if (id >= 2001 && id <= 2005)
+                {
+                    int targetDesk = id - 2001;
+                    if (targetDesk < GetDesktopCount())
+                    {
+                        IntPtr activeHwnd = GetForegroundWindow();
+                        IntPtr myHwnd = new WindowInteropHelper(this).Handle;
+                        if (activeHwnd != IntPtr.Zero && activeHwnd != myHwnd)
+                        {
+                            MoveWindowToDesktopNumber(activeHwnd, targetDesk);
+                        }
+                    }
+                    handled = true;
+                }
             }
             else if (msg == _shellHookMsg) { DelayedRefresh(800); handled = true; } // 지연 시간 약간 증가
             return IntPtr.Zero;
@@ -263,6 +288,13 @@ namespace VirtualDesktopBar
             _shellHookMsg = RegisterWindowMessage("SHELLHOOK");
             RegisterShellHookWindow(myHwnd);
             RegisterHotKey(myHwnd, 9000, 0x0008 | 0x0001, 0x56); // Win+Alt+V
+
+            for (int i = 1; i <= 5; i++)
+            {
+                uint vk = (uint)(0x30 + i);
+                RegisterHotKey(myHwnd, 1000 + i, 0x0001, vk);        // Alt + 1 ~ 5
+                RegisterHotKey(myHwnd, 2000 + i, 0x0001 | 0x0002, vk); // Ctrl + Alt + 1 ~ 5
+            }
 
             _winEventDelegate = new WinEventDelegate(WinEventProc);
             _hWinEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_DESKTOPSWITCH, IntPtr.Zero, _winEventDelegate, 0, 0, 0);
@@ -390,6 +422,19 @@ namespace VirtualDesktopBar
             return null;
         }
 
-        protected override void OnClosed(EventArgs e) { if (_hWinEventHook != IntPtr.Zero) UnhookWinEvent(_hWinEventHook); _notifyIcon.Dispose(); base.OnClosed(e); }
+        protected override void OnClosed(EventArgs e)
+        {
+            IntPtr myHwnd = new WindowInteropHelper(this).Handle;
+            UnregisterHotKey(myHwnd, 9000);
+            for (int i = 1; i <= 5; i++)
+            {
+                UnregisterHotKey(myHwnd, 1000 + i);
+                UnregisterHotKey(myHwnd, 2000 + i);
+            }
+
+            if (_hWinEventHook != IntPtr.Zero) UnhookWinEvent(_hWinEventHook);
+            _notifyIcon.Dispose();
+            base.OnClosed(e);
+        }
     }
 }
