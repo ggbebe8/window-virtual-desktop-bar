@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -25,25 +24,25 @@ namespace VirtualDesktopBar
         public bool IsLast { get => _isLast; set { if (_isLast != value) { _isLast = value; OnPropertyChanged(); } } }
         public System.Windows.Media.Brush BackgroundBrush => IsCurrent ? new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x55, 0xCC, 0xCC, 0xCC)) : System.Windows.Media.Brushes.Transparent;
 
-        private string _desktopName;
+        private string _desktopName = "";
         public string DesktopName { get => _desktopName; set { if (_desktopName != value) { _desktopName = value; OnPropertyChanged(); OnPropertyChanged(nameof(DisplayName)); } } }
         public string DisplayName => MainWindow.ShowDesktopNames ? (string.IsNullOrEmpty(DesktopName) ? $"데스크톱 {DesktopId}" : DesktopName) : DesktopId.ToString();
         public void RefreshDisplayName() => OnPropertyChanged(nameof(DisplayName));
 
-        public event PropertyChangedEventHandler PropertyChanged;
-        protected void OnPropertyChanged([CallerMemberName] string name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        public event PropertyChangedEventHandler? PropertyChanged;
+        protected void OnPropertyChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 
     public class AppInfo : INotifyPropertyChanged
     {
         public IntPtr Hwnd { get; set; }
-        private ImageSource _appIcon;
-        public ImageSource AppIcon { get => _appIcon; set { _appIcon = value; OnPropertyChanged(); } }
+        private ImageSource? _appIcon;
+        public ImageSource? AppIcon { get => _appIcon; set { _appIcon = value; OnPropertyChanged(); } }
         private bool _isFocused;
         public bool IsFocused { get => _isFocused; set { if (_isFocused != value) { _isFocused = value; OnPropertyChanged(); OnPropertyChanged(nameof(FocusBrush)); } } }
         public System.Windows.Media.Brush FocusBrush => IsFocused ? System.Windows.Media.Brushes.SkyBlue : System.Windows.Media.Brushes.Transparent;
-        public event PropertyChangedEventHandler PropertyChanged;
-        protected void OnPropertyChanged([CallerMemberName] string name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        public event PropertyChangedEventHandler? PropertyChanged;
+        protected void OnPropertyChanged([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 
     public partial class MainWindow : Window
@@ -51,6 +50,7 @@ namespace VirtualDesktopBar
         private System.Windows.Forms.NotifyIcon _notifyIcon = new System.Windows.Forms.NotifyIcon();
         private bool _isExit;
         private int _shellHookMsg;
+        private static readonly string SettingsPath = System.IO.Path.Combine(AppContext.BaseDirectory, "settings.cfg");
 
         [DllImport("VirtualDesktopAccessor.dll")] public static extern int GetWindowDesktopNumber(IntPtr window);
         [DllImport("VirtualDesktopAccessor.dll")] public static extern void PinWindow(IntPtr hwnd);
@@ -90,8 +90,9 @@ namespace VirtualDesktopBar
         private const uint EVENT_SYSTEM_FOREGROUND = 0x0003, EVENT_SYSTEM_DESKTOPSWITCH = 0x0020;
 
         delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
-        private WinEventDelegate _winEventDelegate;
+        private WinEventDelegate? _winEventDelegate;
         private IntPtr _hWinEventHook;
+        private IntPtr _desktopSwitchHook;
 
         public ObservableCollection<DesktopGroup> Groups { get; set; } = new ObservableCollection<DesktopGroup>();
 
@@ -101,6 +102,7 @@ namespace VirtualDesktopBar
             LoadSettings();
             InitNotifyIcon();
             DesktopGroups.ItemsSource = Groups;
+            InitializePresentation();
         }
 
         private void SaveSettings()
@@ -108,7 +110,7 @@ namespace VirtualDesktopBar
             try 
             { 
                 string content = $"ShowDesktopNames={ShowDesktopNames}\nUseBottomOffset={UseBottomOffset}";
-                System.IO.File.WriteAllText("settings.cfg", content); 
+                System.IO.File.WriteAllText(SettingsPath, content);
             } catch { }
         }
 
@@ -116,16 +118,18 @@ namespace VirtualDesktopBar
         {
             try 
             { 
-                if (System.IO.File.Exists("settings.cfg")) 
+                // Also read the old working-directory location on the first run after upgrading.
+                string path = System.IO.File.Exists(SettingsPath) ? SettingsPath : "settings.cfg";
+                if (System.IO.File.Exists(path))
                 {
-                    var lines = System.IO.File.ReadAllLines("settings.cfg");
+                    var lines = System.IO.File.ReadAllLines(path);
                     foreach (var line in lines)
                     {
                         var parts = line.Split('=');
-                        if (parts.Length == 2)
+                        if (parts.Length == 2 && bool.TryParse(parts[1], out bool value))
                         {
-                            if (parts[0] == "ShowDesktopNames") ShowDesktopNames = bool.Parse(parts[1]);
-                            else if (parts[0] == "UseBottomOffset") UseBottomOffset = bool.Parse(parts[1]);
+                            if (parts[0] == "ShowDesktopNames") ShowDesktopNames = value;
+                            else if (parts[0] == "UseBottomOffset") UseBottomOffset = value;
                         }
                     }
                 }
@@ -134,7 +138,7 @@ namespace VirtualDesktopBar
 
         private void InitNotifyIcon()
         {
-            _notifyIcon.Icon = new Icon("app.ico");
+            _notifyIcon.Icon = new Icon(System.IO.Path.Combine(AppContext.BaseDirectory, "app.ico"));
             _notifyIcon.Visible = true;
             _notifyIcon.DoubleClick += (s, e) => ShowMainWindow();
             var contextMenu = new System.Windows.Forms.ContextMenuStrip();
@@ -145,23 +149,20 @@ namespace VirtualDesktopBar
                 SaveSettings();
                 foreach (var g in Groups) g.RefreshDisplayName();
             }));
-            contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("바 위치 전환 (하단/여백)", null, (s, e) => {
-                UseBottomOffset = !UseBottomOffset;
-                SaveSettings();
-                SetWindowPosition();
-            }));
+            AddPlacementMenu(contextMenu);
             contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("종료", null, (s, e) => ExitApplication()));
             _notifyIcon.ContextMenuStrip = contextMenu;
         }
 
         private void ToggleUI() { if (this.Visibility == Visibility.Visible) HideMainWindow(); else ShowMainWindow(); }
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e) { if (!_isExit) { e.Cancel = true; HideMainWindow(); } base.OnClosing(e); }
-        private void HideMainWindow() { this.Hide(); }
-        private void ShowMainWindow() { RefreshData(true); this.Show(); this.WindowState = WindowState.Normal; this.Activate(); SetWindowPosition(); }
-        private void ExitApplication() { _isExit = true; if (_hWinEventHook != IntPtr.Zero) UnhookWinEvent(_hWinEventHook); _notifyIcon.Dispose(); Process.GetCurrentProcess().Kill(); }
+        private void HideMainWindow() { _refreshTimer.Stop(); _maintenanceTimer.Stop(); Hide(); }
+        private void ShowMainWindow() { Show(); WindowState = WindowState.Normal; PinBar(); RefreshSafely(); SetWindowPosition(); ForceTopmost(); _maintenanceTimer.Start(); }
+        private void ExitApplication() { _isExit = true; Close(); }
 
         private void AppIcon_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
+            if (e.ChangedButton != System.Windows.Input.MouseButton.Left) return;
             if (sender is FrameworkElement element && element.DataContext is AppInfo app)
             {
                 int targetDesk = -1;
@@ -178,6 +179,7 @@ namespace VirtualDesktopBar
         // 🔥 데스크톱 번호 클릭 시 해당 데스크톱으로 이동
         private void DesktopId_MouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
         {
+            if (e.ChangedButton != System.Windows.Input.MouseButton.Left) return;
             if (sender is FrameworkElement element && element.DataContext is DesktopGroup group)
             {
                 try 
@@ -193,17 +195,17 @@ namespace VirtualDesktopBar
         {
             if (sender is FrameworkElement element && element.DataContext is DesktopGroup group)
             {
-                string newName = ShowInputDialog(group.DesktopName);
+                string? newName = ShowInputDialog(group.DesktopName);
                 if (newName != null)
                 {
                     SetDesktopName(group.DesktopId - 1, newName);
-                    RefreshData(true);
+                    RefreshSafely();
                 }
                 e.Handled = true;
             }
         }
 
-        private string ShowInputDialog(string defaultText)
+        private string? ShowInputDialog(string defaultText)
         {
             Window dialog = new Window { Width = 300, Height = 130, Title = "이름 변경", WindowStartupLocation = WindowStartupLocation.CenterScreen, Topmost = true, ResizeMode = ResizeMode.NoResize };
             var tb = new System.Windows.Controls.TextBox { Text = defaultText, Margin = new Thickness(10) };
@@ -244,7 +246,19 @@ namespace VirtualDesktopBar
 
         private IntPtr HwndHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
-            if (msg == WM_HOTKEY)
+            if (msg == 0x21) // WM_MOUSEACTIVATE: clicks must not steal the application's focus.
+            {
+                handled = true;
+                return new IntPtr(3); // MA_NOACTIVATE
+            }
+            if (msg == _taskbarCreatedMsg)
+            {
+                PinBar();
+                DelayedRefresh(300);
+            }
+            else if (msg == 0x007E || msg == 0x001A || msg == 0x02E0)
+                DelayedRefresh(150); // Display, work area, or DPI changed.
+            else if (msg == WM_HOTKEY)
             {
                 int id = wParam.ToInt32();
                 if (id == 9000) { ToggleUI(); handled = true; }
@@ -272,7 +286,7 @@ namespace VirtualDesktopBar
                     handled = true;
                 }
             }
-            else if (msg == _shellHookMsg) { DelayedRefresh(800); handled = true; } // 지연 시간 약간 증가
+            else if (msg == _shellHookMsg) { DelayedRefresh(150); handled = true; }
             return IntPtr.Zero;
         }
 
@@ -280,12 +294,14 @@ namespace VirtualDesktopBar
         {
             base.OnSourceInitialized(e);
             IntPtr myHwnd = new WindowInteropHelper(this).Handle;
-            IntPtr exStyle = GetWindowLongPtr(myHwnd, GWL_EXSTYLE);
+            _barHwnd = myHwnd;
+            IntPtr exStyle = ReadWindowStyle(myHwnd);
             if (IntPtr.Size == 8) SetWindowLongPtr64(myHwnd, GWL_EXSTYLE, new IntPtr(exStyle.ToInt64() | WS_EX_NOACTIVATE));
             else SetWindowLong32(myHwnd, GWL_EXSTYLE, (int)exStyle.ToInt64() | WS_EX_NOACTIVATE);
 
-            HwndSource.FromHwnd(myHwnd).AddHook(HwndHook);
+            HwndSource.FromHwnd(myHwnd)?.AddHook(HwndHook);
             _shellHookMsg = RegisterWindowMessage("SHELLHOOK");
+            _taskbarCreatedMsg = RegisterWindowMessage("TaskbarCreated");
             RegisterShellHookWindow(myHwnd);
             RegisterHotKey(myHwnd, 9000, 0x0008 | 0x0001, 0x56); // Win+Alt+V
 
@@ -297,22 +313,26 @@ namespace VirtualDesktopBar
             }
 
             _winEventDelegate = new WinEventDelegate(WinEventProc);
-            _hWinEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_DESKTOPSWITCH, IntPtr.Zero, _winEventDelegate, 0, 0, 0);
-
-            RefreshData(true);
-            SetWindowPosition();
+            _hWinEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, _winEventDelegate, 0, 0, 0);
+            _desktopSwitchHook = SetWinEventHook(EVENT_SYSTEM_DESKTOPSWITCH, EVENT_SYSTEM_DESKTOPSWITCH, IntPtr.Zero, _winEventDelegate, 0, 0, 0);
+            PinBar();
         }
 
         private void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
         {
-            if (this.Visibility != Visibility.Visible) return;
-            DelayedRefresh(eventType == EVENT_SYSTEM_DESKTOPSWITCH ? 100 : 300);
+            if (_isExit || hwnd == _barHwnd) return;
+            Dispatcher.BeginInvoke(new Action(() => {
+                if (!IsVisible || _isExit) return;
+                ForceTopmost();
+                DelayedRefresh(150);
+            }));
         }
 
-        private async void DelayedRefresh(int delayMs)
+        private void DelayedRefresh(int delayMs)
         {
-            await System.Threading.Tasks.Task.Delay(delayMs);
-            Dispatcher.Invoke(() => { PinWindow(new WindowInteropHelper(this).Handle); RefreshData(true); ForceTopmost(); });
+            if (_isExit || !IsVisible || _refreshTimer.IsEnabled) return;
+            _refreshTimer.Interval = TimeSpan.FromMilliseconds(delayMs);
+            _refreshTimer.Start();
         }
 
         private void ForceTopmost()
@@ -321,32 +341,21 @@ namespace VirtualDesktopBar
             if (hWnd != IntPtr.Zero && this.Visibility == Visibility.Visible)
             {
                 SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-                this.Topmost = false; this.Topmost = true;
             }
         }
 
         private void SetWindowPosition()
         {
-            Dispatcher.Invoke(() => {
-                this.WindowStartupLocation = WindowStartupLocation.Manual;
-                var screen = System.Windows.Forms.Screen.PrimaryScreen;
-                var source = PresentationSource.FromVisual(this);
-                double dpiY = (source?.CompositionTarget != null) ? source.CompositionTarget.TransformToDevice.M22 : 1.0;
-                this.Left = (screen.WorkingArea.Left / dpiY) + 10;
-                
-                double topPos = (screen.Bounds.Bottom / dpiY) - this.ActualHeight;
-                if (UseBottomOffset) topPos -= 50;
-                this.Top = topPos;
-
-                PinWindow(new WindowInteropHelper(this).Handle); ForceTopmost();
-            }, System.Windows.Threading.DispatcherPriority.Render);
+            PositionAtTaskbar();
         }
 
-        private void RefreshData(bool forceIconUpdate = false)
+        private void RefreshData()
         {
             if (this.Visibility != Visibility.Visible) return;
-            int desktopCount = 3; try { desktopCount = GetDesktopCount(); } catch { }
-            if (Groups.Count != desktopCount) { Groups.Clear(); for (int i = 0; i < desktopCount; i++) Groups.Add(new DesktopGroup { DesktopId = i + 1 }); }
+            int desktopCount = GetDesktopCount();
+            if (desktopCount <= 0) return; // Preserve the last snapshot while Explorer is restarting.
+            while (Groups.Count > desktopCount) Groups.RemoveAt(Groups.Count - 1);
+            while (Groups.Count < desktopCount) Groups.Add(new DesktopGroup { DesktopId = Groups.Count + 1 });
             IntPtr focusedHwnd = GetForegroundWindow();
             int currentDesk = -1; try { currentDesk = GetCurrentDesktopNumber(); } catch { }
             for (int i = 0; i < Groups.Count; i++) 
@@ -363,7 +372,7 @@ namespace VirtualDesktopBar
             EnumWindows((hWnd, lParam) => {
                 if (IsWindowVisible(hWnd)) {
                     StringBuilder title = new StringBuilder(256); GetWindowText(hWnd, title, title.Capacity);
-                    if (title.Length > 0 && title.ToString() != "VD Bar") {
+                    if (title.Length > 0 && hWnd != _barHwnd) {
                         int deskNum = GetWindowDesktopNumber(hWnd);
                         if (deskNum >= 0 && deskNum < desktopCount) currentWindows.Add(new AppInfo_Internal { DesktopId = deskNum + 1, Hwnd = hWnd });
                     }
@@ -385,12 +394,11 @@ namespace VirtualDesktopBar
                 foreach (var n in newApps) {
                     var existing = group.Apps.FirstOrDefault(a => a.Hwnd == n.Hwnd);
                     if (existing == null) {
-                        ImageSource icon = ExtractIconFromHwnd(n.Hwnd);
-                        if (icon != null) group.Apps.Add(new AppInfo { Hwnd = n.Hwnd, AppIcon = icon, IsFocused = (n.Hwnd == focusedHwnd) });
+                        ImageSource? icon = ExtractIconFromHwnd(n.Hwnd);
+                        group.Apps.Add(new AppInfo { Hwnd = n.Hwnd, AppIcon = icon ?? DefaultAppIcon, IsFocused = (n.Hwnd == focusedHwnd) });
                     }
                     else {
                         existing.IsFocused = (existing.Hwnd == focusedHwnd);
-                        if (forceIconUpdate) { var newIcon = ExtractIconFromHwnd(n.Hwnd); if (newIcon != null) existing.AppIcon = newIcon; }
                     }
                 }
 
@@ -401,7 +409,7 @@ namespace VirtualDesktopBar
 
         class AppInfo_Internal { public int DesktopId; public IntPtr Hwnd; }
 
-        private ImageSource ExtractIconFromHwnd(IntPtr hWnd)
+        private ImageSource? ExtractIconFromHwnd(IntPtr hWnd)
         {
             try {
                 IntPtr hIcon = IntPtr.Zero; IntPtr res;
@@ -424,6 +432,9 @@ namespace VirtualDesktopBar
 
         protected override void OnClosed(EventArgs e)
         {
+            _isExit = true;
+            _refreshTimer.Stop();
+            _maintenanceTimer.Stop();
             IntPtr myHwnd = new WindowInteropHelper(this).Handle;
             UnregisterHotKey(myHwnd, 9000);
             for (int i = 1; i <= 5; i++)
@@ -433,6 +444,10 @@ namespace VirtualDesktopBar
             }
 
             if (_hWinEventHook != IntPtr.Zero) UnhookWinEvent(_hWinEventHook);
+            if (_desktopSwitchHook != IntPtr.Zero) UnhookWinEvent(_desktopSwitchHook);
+            DeregisterShellHookWindow(myHwnd);
+            HwndSource.FromHwnd(myHwnd)?.RemoveHook(HwndHook);
+            _notifyIcon.Icon?.Dispose();
             _notifyIcon.Dispose();
             base.OnClosed(e);
         }
