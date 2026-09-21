@@ -13,6 +13,7 @@ public partial class MainWindow
 {
     private readonly DispatcherTimer _refreshTimer = new();
     private readonly DispatcherTimer _maintenanceTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private long _nextSnapshotAt;
     private IntPtr _barHwnd;
     private int _taskbarCreatedMsg;
     private bool _reportedNativeError;
@@ -70,11 +71,15 @@ public partial class MainWindow
             SetWindowPosition();
             EnsureAboveTaskbar();
         };
-        // Recover missed shell notifications without repeatedly changing Z order.
+        // Keep taskbar recovery responsive; expensive snapshots only backstop missed events.
         _maintenanceTimer.Tick += (_, _) =>
         {
             if (!IsVisible || _isExit) return;
-            RefreshSafely();
+            if (Environment.TickCount64 >= _nextSnapshotAt) RefreshSafely();
+            else
+                foreach (var group in Groups)
+                    foreach (var app in group.Apps)
+                        UpdateAppIcon(app);
             SetWindowPosition();
             EnsureAboveTaskbar();
         };
@@ -121,6 +126,7 @@ public partial class MainWindow
     {
         try { RefreshData(); }
         catch (Exception ex) { ReportNativeError(ex); }
+        finally { _nextSnapshotAt = Environment.TickCount64 + 10000; }
     }
 
     private void ReportNativeError(Exception ex)

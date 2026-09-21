@@ -10,7 +10,6 @@ using System.Text;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 
 namespace VirtualDesktopBar
 {
@@ -36,6 +35,8 @@ namespace VirtualDesktopBar
     public class AppInfo : INotifyPropertyChanged
     {
         public IntPtr Hwnd { get; set; }
+        internal IconRefreshSchedule IconSchedule { get; } = new();
+        internal string? IconFingerprint;
         private ImageSource? _appIcon;
         public ImageSource? AppIcon { get => _appIcon; set { _appIcon = value; OnPropertyChanged(); } }
         private bool _isFocused;
@@ -66,7 +67,6 @@ namespace VirtualDesktopBar
         delegate bool EnumWindowsProc(IntPtr hWnd, int lParam);
         [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
         [DllImport("user32.dll")] static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-        [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SendMessageTimeout(IntPtr hWnd, int Msg, int wParam, int lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
         [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
         [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
@@ -76,8 +76,6 @@ namespace VirtualDesktopBar
         [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hWinEventHook);
         [DllImport("user32.dll")] static extern bool RegisterShellHookWindow(IntPtr hWnd);
         [DllImport("user32.dll")] static extern int RegisterWindowMessage(string lpString);
-        [DllImport("user32.dll", EntryPoint = "GetClassLong")] static extern uint GetClassLongPtr32(IntPtr hWnd, int nIndex);
-        [DllImport("user32.dll", EntryPoint = "GetClassLongPtr")] static extern IntPtr GetClassLongPtr64(IntPtr hWnd, int nIndex);
         [DllImport("user32.dll", SetLastError = true)] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
         [DllImport("user32.dll")] private static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
         [DllImport("user32.dll", EntryPoint = "SetWindowLong")] private static extern int SetWindowLong32(IntPtr hWnd, int nIndex, int dwNewLong);
@@ -86,7 +84,7 @@ namespace VirtualDesktopBar
         public static bool ShowDesktopNames { get; set; } = false;
         public static bool UseBottomOffset { get; set; } = false;
         private const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
-        private const int GWL_EXSTYLE = -20, WS_EX_NOACTIVATE = 0x08000000, SW_RESTORE = 9, SW_SHOW = 5, WM_HOTKEY = 0x0312, WM_GETICON = 0x7F;
+        private const int GWL_EXSTYLE = -20, WS_EX_NOACTIVATE = 0x08000000, SW_RESTORE = 9, SW_SHOW = 5, WM_HOTKEY = 0x0312;
         private const uint EVENT_SYSTEM_FOREGROUND = 0x0003, EVENT_SYSTEM_DESKTOPSWITCH = 0x0020;
 
         delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
@@ -286,7 +284,17 @@ namespace VirtualDesktopBar
                     handled = true;
                 }
             }
-            else if (msg == _shellHookMsg) { DelayedRefresh(150); handled = true; }
+            else if (msg == _shellHookMsg)
+            {
+                // HSHELL_REDRAW (including HSHELL_FLASH): window title/icon changed.
+                if ((wParam.ToInt64() & 0x7FFF) == 6)
+                {
+                    foreach (var app in Groups.SelectMany(g => g.Apps).Where(a => a.Hwnd == lParam))
+                        app.IconSchedule.Invalidate(Environment.TickCount64);
+                }
+                else if (lParam != _barHwnd) DelayedRefresh(150);
+                handled = true;
+            }
             return IntPtr.Zero;
         }
 
@@ -394,12 +402,13 @@ namespace VirtualDesktopBar
                 foreach (var n in newApps) {
                     var existing = group.Apps.FirstOrDefault(a => a.Hwnd == n.Hwnd);
                     if (existing == null) {
-                        ImageSource? icon = ExtractIconFromHwnd(n.Hwnd);
-                        group.Apps.Add(new AppInfo { Hwnd = n.Hwnd, AppIcon = icon ?? DefaultAppIcon, IsFocused = (n.Hwnd == focusedHwnd) });
+                        existing = new AppInfo { Hwnd = n.Hwnd, AppIcon = DefaultAppIcon, IsFocused = (n.Hwnd == focusedHwnd) };
+                        group.Apps.Add(existing);
                     }
                     else {
                         existing.IsFocused = (existing.Hwnd == focusedHwnd);
                     }
+                    UpdateAppIcon(existing);
                 }
 
                 // 🔥 3. 정렬 상태를 리스트 순서에 맞게 동기화 (기존 아이콘 위치는 최대한 고정)
@@ -409,30 +418,10 @@ namespace VirtualDesktopBar
 
         class AppInfo_Internal { public int DesktopId; public IntPtr Hwnd; }
 
-        private ImageSource? ExtractIconFromHwnd(IntPtr hWnd)
-        {
-            try {
-                IntPtr hIcon = IntPtr.Zero; IntPtr res;
-                // 1. WM_GETICON Small
-                if (SendMessageTimeout(hWnd, WM_GETICON, 0, 0, 0x0002, 100, out res) != IntPtr.Zero && res != IntPtr.Zero) hIcon = res;
-                // 2. WM_GETICON Big
-                if (hIcon == IntPtr.Zero && SendMessageTimeout(hWnd, WM_GETICON, 1, 0, 0x0002, 100, out res) != IntPtr.Zero && res != IntPtr.Zero) hIcon = res;
-                // 3. Class Small Icon (-34)
-                if (hIcon == IntPtr.Zero) hIcon = (IntPtr.Size == 8) ? GetClassLongPtr64(hWnd, -34) : (IntPtr)GetClassLongPtr32(hWnd, -34);
-                // 4. Class Icon (-14)
-                if (hIcon == IntPtr.Zero) hIcon = (IntPtr.Size == 8) ? GetClassLongPtr64(hWnd, -14) : (IntPtr)GetClassLongPtr32(hWnd, -14);
-
-                if (hIcon != IntPtr.Zero) {
-                    BitmapSource bs = Imaging.CreateBitmapSourceFromHIcon(hIcon, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
-                    bs.Freeze(); return bs;
-                }
-            } catch { }
-            return null;
-        }
-
         protected override void OnClosed(EventArgs e)
         {
             _isExit = true;
+            _iconCancellation.Cancel();
             _refreshTimer.Stop();
             _maintenanceTimer.Stop();
             IntPtr myHwnd = new WindowInteropHelper(this).Handle;
