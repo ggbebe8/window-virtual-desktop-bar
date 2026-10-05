@@ -51,6 +51,7 @@ namespace VirtualDesktopBar
         private System.Windows.Forms.NotifyIcon _notifyIcon = new System.Windows.Forms.NotifyIcon();
         private bool _isExit;
         private int _shellHookMsg;
+        private HwndSource? _hwndSource;
         private static readonly string SettingsPath = System.IO.Path.Combine(AppContext.BaseDirectory, "settings.cfg");
 
         [DllImport("VirtualDesktopAccessor.dll")] public static extern int GetWindowDesktopNumber(IntPtr window);
@@ -83,6 +84,42 @@ namespace VirtualDesktopBar
 
         public static bool ShowDesktopNames { get; set; } = false;
         public static bool UseBottomOffset { get; set; } = false;
+
+        public const uint MOD_ALT = 0x0001;
+        public const uint MOD_CONTROL = 0x0002;
+        public const uint MOD_SHIFT = 0x0004;
+        public const uint MOD_WIN = 0x0008;
+
+        public static uint SwitchModifiers { get; set; } = MOD_ALT;
+        public static uint MoveModifiers { get; set; } = MOD_CONTROL | MOD_ALT;
+        public const int HOTKEY_COUNT = 9;
+
+        public static string ModifiersToString(uint mod)
+        {
+            var list = new List<string>();
+            if ((mod & MOD_CONTROL) != 0) list.Add("Ctrl");
+            if ((mod & MOD_ALT) != 0) list.Add("Alt");
+            if ((mod & MOD_SHIFT) != 0) list.Add("Shift");
+            if ((mod & MOD_WIN) != 0) list.Add("Win");
+            return list.Count > 0 ? string.Join("+", list) : "없음";
+        }
+
+        public static uint ParseModifiers(string? str, uint fallback)
+        {
+            if (string.IsNullOrWhiteSpace(str)) return fallback;
+            uint mod = 0;
+            var parts = str.Split(new[] { '+', ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                string p = part.Trim().ToLowerInvariant();
+                if (p == "ctrl" || p == "control") mod |= MOD_CONTROL;
+                else if (p == "alt") mod |= MOD_ALT;
+                else if (p == "shift") mod |= MOD_SHIFT;
+                else if (p == "win" || p == "windows") mod |= MOD_WIN;
+            }
+            return mod != 0 ? mod : fallback;
+        }
+
         private const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010;
         private const int GWL_EXSTYLE = -20, WS_EX_NOACTIVATE = 0x08000000, SW_RESTORE = 9, SW_SHOW = 5, WM_HOTKEY = 0x0312;
         private const uint EVENT_SYSTEM_FOREGROUND = 0x0003, EVENT_SYSTEM_DESKTOPSWITCH = 0x0020;
@@ -107,7 +144,10 @@ namespace VirtualDesktopBar
         {
             try 
             { 
-                string content = $"ShowDesktopNames={ShowDesktopNames}\nUseBottomOffset={UseBottomOffset}";
+                string content = $"ShowDesktopNames={ShowDesktopNames}\n" +
+                                 $"UseBottomOffset={UseBottomOffset}\n" +
+                                 $"SwitchModifiers={ModifiersToString(SwitchModifiers)}\n" +
+                                 $"MoveModifiers={ModifiersToString(MoveModifiers)}";
                 System.IO.File.WriteAllText(SettingsPath, content);
             } catch { }
         }
@@ -124,10 +164,17 @@ namespace VirtualDesktopBar
                     foreach (var line in lines)
                     {
                         var parts = line.Split('=');
-                        if (parts.Length == 2 && bool.TryParse(parts[1], out bool value))
+                        if (parts.Length == 2)
                         {
-                            if (parts[0] == "ShowDesktopNames") ShowDesktopNames = value;
-                            else if (parts[0] == "UseBottomOffset") UseBottomOffset = value;
+                            string key = parts[0].Trim();
+                            string val = parts[1].Trim();
+                            if (bool.TryParse(val, out bool boolValue))
+                            {
+                                if (key == "ShowDesktopNames") ShowDesktopNames = boolValue;
+                                else if (key == "UseBottomOffset") UseBottomOffset = boolValue;
+                            }
+                            if (key == "SwitchModifiers") SwitchModifiers = ParseModifiers(val, MOD_ALT);
+                            else if (key == "MoveModifiers") MoveModifiers = ParseModifiers(val, MOD_CONTROL | MOD_ALT);
                         }
                     }
                 }
@@ -147,9 +194,51 @@ namespace VirtualDesktopBar
                 SaveSettings();
                 foreach (var g in Groups) g.RefreshDisplayName();
             }));
+            contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("단축키 설정...", null, (s, e) => OpenHotkeySettings()));
             AddPlacementMenu(contextMenu);
             contextMenu.Items.Add(new System.Windows.Forms.ToolStripMenuItem("종료", null, (s, e) => ExitApplication()));
             _notifyIcon.ContextMenuStrip = contextMenu;
+        }
+
+        private void OpenHotkeySettings()
+        {
+            var dlg = new HotkeySettingsWindow(SwitchModifiers, MoveModifiers);
+            if (dlg.ShowDialog() == true)
+            {
+                SwitchModifiers = dlg.ResultSwitchModifiers;
+                MoveModifiers = dlg.ResultMoveModifiers;
+                RegisterAllHotKeys();
+                SaveSettings();
+            }
+        }
+
+        private void RegisterAllHotKeys()
+        {
+            UnregisterAllHotKeys();
+            IntPtr myHwnd = _barHwnd != IntPtr.Zero ? _barHwnd : new WindowInteropHelper(this).Handle;
+            if (myHwnd == IntPtr.Zero) return;
+
+            RegisterHotKey(myHwnd, 9000, MOD_WIN | MOD_ALT, 0x56); // Win+Alt+V
+
+            for (int i = 1; i <= HOTKEY_COUNT; i++)
+            {
+                uint vk = (uint)(0x30 + i);
+                if (SwitchModifiers != 0) RegisterHotKey(myHwnd, 1000 + i, SwitchModifiers, vk);
+                if (MoveModifiers != 0) RegisterHotKey(myHwnd, 2000 + i, MoveModifiers, vk);
+            }
+        }
+
+        private void UnregisterAllHotKeys()
+        {
+            IntPtr myHwnd = _barHwnd != IntPtr.Zero ? _barHwnd : new WindowInteropHelper(this).Handle;
+            if (myHwnd == IntPtr.Zero) return;
+
+            UnregisterHotKey(myHwnd, 9000);
+            for (int i = 1; i <= HOTKEY_COUNT; i++)
+            {
+                UnregisterHotKey(myHwnd, 1000 + i);
+                UnregisterHotKey(myHwnd, 2000 + i);
+            }
         }
 
         private void ToggleUI() { if (this.Visibility == Visibility.Visible) HideMainWindow(); else ShowMainWindow(); }
@@ -260,7 +349,7 @@ namespace VirtualDesktopBar
             {
                 int id = wParam.ToInt32();
                 if (id == 9000) { ToggleUI(); handled = true; }
-                else if (id >= 1001 && id <= 1005)
+                else if (id >= 1001 && id <= 1000 + HOTKEY_COUNT)
                 {
                     int targetDesk = id - 1001;
                     if (targetDesk < GetDesktopCount())
@@ -269,13 +358,13 @@ namespace VirtualDesktopBar
                     }
                     handled = true;
                 }
-                else if (id >= 2001 && id <= 2005)
+                else if (id >= 2001 && id <= 2000 + HOTKEY_COUNT)
                 {
                     int targetDesk = id - 2001;
                     if (targetDesk < GetDesktopCount())
                     {
                         IntPtr activeHwnd = GetForegroundWindow();
-                        IntPtr myHwnd = new WindowInteropHelper(this).Handle;
+                        IntPtr myHwnd = _barHwnd != IntPtr.Zero ? _barHwnd : new WindowInteropHelper(this).Handle;
                         if (activeHwnd != IntPtr.Zero && activeHwnd != myHwnd)
                         {
                             MoveWindowToDesktopNumber(activeHwnd, targetDesk);
@@ -307,18 +396,13 @@ namespace VirtualDesktopBar
             if (IntPtr.Size == 8) SetWindowLongPtr64(myHwnd, GWL_EXSTYLE, new IntPtr(exStyle.ToInt64() | WS_EX_NOACTIVATE));
             else SetWindowLong32(myHwnd, GWL_EXSTYLE, (int)exStyle.ToInt64() | WS_EX_NOACTIVATE);
 
-            HwndSource.FromHwnd(myHwnd)?.AddHook(HwndHook);
+            _hwndSource = HwndSource.FromHwnd(myHwnd);
+            _hwndSource?.AddHook(HwndHook);
+
             _shellHookMsg = RegisterWindowMessage("SHELLHOOK");
             _taskbarCreatedMsg = RegisterWindowMessage("TaskbarCreated");
             RegisterShellHookWindow(myHwnd);
-            RegisterHotKey(myHwnd, 9000, 0x0008 | 0x0001, 0x56); // Win+Alt+V
-
-            for (int i = 1; i <= 5; i++)
-            {
-                uint vk = (uint)(0x30 + i);
-                RegisterHotKey(myHwnd, 1000 + i, 0x0001, vk);        // Alt + 1 ~ 5
-                RegisterHotKey(myHwnd, 2000 + i, 0x0001 | 0x0002, vk); // Ctrl + Alt + 1 ~ 5
-            }
+            RegisterAllHotKeys();
 
             _winEventDelegate = new WinEventDelegate(WinEventProc);
             _hWinEventHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, IntPtr.Zero, _winEventDelegate, 0, 0, 0);
@@ -345,7 +429,7 @@ namespace VirtualDesktopBar
 
         private void ForceTopmost()
         {
-            IntPtr hWnd = new WindowInteropHelper(this).Handle;
+            IntPtr hWnd = _barHwnd != IntPtr.Zero ? _barHwnd : new WindowInteropHelper(this).Handle;
             if (hWnd != IntPtr.Zero && this.Visibility == Visibility.Visible)
             {
                 SetWindowPos(hWnd, new IntPtr(-1), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -424,18 +508,21 @@ namespace VirtualDesktopBar
             _iconCancellation.Cancel();
             _refreshTimer.Stop();
             _maintenanceTimer.Stop();
-            IntPtr myHwnd = new WindowInteropHelper(this).Handle;
-            UnregisterHotKey(myHwnd, 9000);
-            for (int i = 1; i <= 5; i++)
-            {
-                UnregisterHotKey(myHwnd, 1000 + i);
-                UnregisterHotKey(myHwnd, 2000 + i);
-            }
+            UnregisterAllHotKeys();
+
+            IntPtr myHwnd = _barHwnd != IntPtr.Zero ? _barHwnd : new WindowInteropHelper(this).Handle;
 
             if (_hWinEventHook != IntPtr.Zero) UnhookWinEvent(_hWinEventHook);
             if (_desktopSwitchHook != IntPtr.Zero) UnhookWinEvent(_desktopSwitchHook);
-            DeregisterShellHookWindow(myHwnd);
-            HwndSource.FromHwnd(myHwnd)?.RemoveHook(HwndHook);
+
+            if (myHwnd != IntPtr.Zero)
+            {
+                DeregisterShellHookWindow(myHwnd);
+            }
+
+            _hwndSource?.RemoveHook(HwndHook);
+            _hwndSource = null;
+
             _notifyIcon.Icon?.Dispose();
             _notifyIcon.Dispose();
             base.OnClosed(e);

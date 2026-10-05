@@ -1,0 +1,39 @@
+<Window x:Class="VirtualDesktopBar.HotkeySettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="단축키 설정" Width="360" SizeToContent="Height"
+        WindowStartupLocation="CenterScreen" ResizeMode="NoResize"
+        Background="#222222" Foreground="#EEEEEE" Topmost="True">
+    <StackPanel Margin="18">
+        <!-- 데스크톱 전환 단축키 -->
+        <TextBlock Text="가상 데스크톱 전환" FontSize="13" FontWeight="Bold" Margin="0,0,0,6" Foreground="#61AFEF"/>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+            <CheckBox x:Name="ChkSwitchCtrl" Content="Ctrl" Margin="0,0,10,0" Foreground="#EEEEEE"/>
+            <CheckBox x:Name="ChkSwitchAlt" Content="Alt" Margin="0,0,10,0" Foreground="#EEEEEE"/>
+            <CheckBox x:Name="ChkSwitchShift" Content="Shift" Margin="0,0,10,0" Foreground="#EEEEEE"/>
+            <CheckBox x:Name="ChkSwitchWin" Content="Win" Margin="0,0,10,0" Foreground="#EEEEEE"/>
+            <TextBlock Text="+  [1 ~ 9]" VerticalAlignment="Center" Foreground="#AAAAAA"/>
+        </StackPanel>
+        <TextBlock x:Name="TxtSwitchPreview" Text="현재: Alt + [1~9]" FontSize="11" Foreground="#888888" Margin="0,0,0,15"/>
+
+        <!-- 창 이동 단축키 -->
+        <TextBlock Text="창을 데스크톱으로 이동" FontSize="13" FontWeight="Bold" Margin="0,0,0,6" Foreground="#98C379"/>
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+            <CheckBox x:Name="ChkMoveCtrl" Content="Ctrl" Margin="0,0,10,0" Foreground="#EEEEEE"/>
+            <CheckBox x:Name="ChkMoveAlt" Content="Alt" Margin="0,0,10,0" Foreground="#EEEEEE"/>
+            <CheckBox x:Name="ChkMoveShift" Content="Shift" Margin="0,0,10,0" Foreground="#EEEEEE"/>
+            <CheckBox x:Name="ChkMoveWin" Content="Win" Margin="0,0,10,0" Foreground="#EEEEEE"/>
+            <TextBlock Text="+  [1 ~ 9]" VerticalAlignment="Center" Foreground="#AAAAAA"/>
+        </StackPanel>
+        <TextBlock x:Name="TxtMovePreview" Text="현재: Ctrl + Alt + [1~9]" FontSize="11" Foreground="#888888" Margin="0,0,0,18"/>
+
+        <!-- 하단 버튼 영역 -->
+        <DockPanel LastChildFill="False">
+            <Button Content="기본값 복원" Width="80" Height="26" Click="BtnReset_Click" Background="#444444" Foreground="#EEEEEE" BorderThickness="0"/>
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                <Button Content="저장" Width="65" Height="26" Margin="0,0,6,0" Click="BtnSave_Click" IsDefault="True" Background="#007ACC" Foreground="White" BorderThickness="0"/>
+                <Button Content="취소" Width="65" Height="26" Click="BtnCancel_Click" IsCancel="True" Background="#444444" Foreground="#EEEEEE" BorderThickness="0"/>
+            </StackPanel>
+        </DockPanel>
+    </StackPanel>
+</Window>
