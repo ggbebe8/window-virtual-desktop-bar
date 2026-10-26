@@ -6,8 +6,9 @@
 - 트레이 아이콘 우클릭 → **바 위치 → 작업표시줄 바로 위**로 배치 변경
 - 기존 `UseBottomOffset=True` 설정은 바로 위 모드로 이어집니다.
 - `Win+Alt+V`: 바 표시/숨기기
-- `Alt+1~5`: 데스크톱 이동
-- `Ctrl+Alt+1~5`: 활성 창을 해당 데스크톱으로 이동
+- `Alt+1~9`: 데스크톱 이동
+- `Ctrl+Alt+1~9`: 활성 창을 해당 데스크톱으로 이동
+- 트레이 아이콘 우클릭 → **단축키 설정...**: 전환/창 이동 조합키 변경
 - 데스크톱 번호 우클릭: 이름 변경
 
 위치는 실제 작업표시줄 영역과 화면 배율을 사용합니다. 자동 숨김 상태에서도 바는
@@ -50,3 +51,8 @@ dotnet run --project tests/IconChecks
 [ABM_GETTASKBARPOS](https://learn.microsoft.com/en-us/windows/win32/shell/abm-gettaskbarpos).
 아이콘 조회 참고: [RelaunchIconResource](https://learn.microsoft.com/en-us/windows/win32/properties/props-system-appusermodel-relaunchiconresource),
 [WM_GETICON](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-geticon).
+
+데스크톱 전환 알림을 받으면 현재 데스크톱의 회색 강조를 갱신합니다.
+전환 후 입력 포커스가 비어 있으면 해당 데스크톱의 마지막 활성 창으로 복구하고,
+기록이 없으면 최소화되지 않은 최상위 앱 창을 찾습니다. 이미 활성화된 앱은 유지합니다.
+Windows가 포커스 요청을 거부하는 경우 강제로 입력을 가로채지는 않습니다.
