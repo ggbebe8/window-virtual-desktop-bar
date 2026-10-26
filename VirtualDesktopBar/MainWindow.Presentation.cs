@@ -63,6 +63,17 @@ public partial class MainWindow
 
     private void InitializePresentation()
     {
+        _desktopSwitchTimer.Tick += (_, _) =>
+        {
+            _desktopSwitchTimer.Stop();
+            if (_isExit) return;
+            try
+            {
+                RestoreFocusedWindowOnCurrentDesktop();
+                RefreshSafely();
+            }
+            catch (Exception ex) { ReportNativeError(ex); }
+        };
         _refreshTimer.Tick += (_, _) =>
         {
             _refreshTimer.Stop();
@@ -75,6 +86,8 @@ public partial class MainWindow
         _maintenanceTimer.Tick += (_, _) =>
         {
             if (!IsVisible || _isExit) return;
+            try { ObserveDesktopChange(); }
+            catch (Exception ex) { ReportNativeError(ex); }
             if (Environment.TickCount64 >= _nextSnapshotAt) RefreshSafely();
             else
                 foreach (var group in Groups)
